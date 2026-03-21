@@ -179,3 +179,102 @@ ros2 run multi_sensor_perception imu_node --ros-args -p use_sim_time:=true
 ```bash
 ros2 topic hz /imu
 ```
+
+## Step 4 — IMU node refinement and validation
+
+Step 4 finalizes the IMU processing node as a stable runtime component:
+
+- `imu_node` subscribes to `/imu` (`sensor_msgs/msg/Imu`).
+- Orientation, angular velocity, and linear acceleration are logged in a compact format.
+- Logging is throttled to keep terminal output readable during continuous simulation.
+- The node is compatible with sim time (`use_sim_time:=true`) and real-time playback.
+
+### Run Step 4 checks
+
+Terminal 1 — simulation:
+
+```bash
+source ~/ros2_ws/install/setup.bash
+ros2 launch multi_sensor_perception simulation.launch.py
+```
+
+Terminal 2 — IMU node:
+
+```bash
+source ~/ros2_ws/install/setup.bash
+ros2 run multi_sensor_perception imu_node --ros-args -p use_sim_time:=true
+```
+
+Optional quick validation:
+
+```bash
+ros2 topic echo /imu --once
+```
+
+## Step 5 — Synchronization, fusion, and latency
+
+Step 5 introduces synchronized multi-sensor fusion with timing diagnostics for presentation and debugging.
+
+### What is included
+
+- **Synchronization (`message_filters`)**
+  - `fusion_node` uses `ApproximateTimeSynchronizer` on:
+    - `/scan` (`LaserScan`)
+    - `/camera/image_raw` (`Image`)
+    - `/imu` (`Imu`)
+  - This ensures fusion decisions use near-simultaneous measurements.
+
+- **Fusion logic**
+  - LiDAR values are filtered to valid finite ranges in `[0.0, 7.0]` meters.
+  - The node computes:
+    - number of valid detections
+    - closest detected distance
+  - Console output:
+    - `[Fusion] Objects: X | Closest: Xm | Sync delay: XX ms`
+  - Decision states:
+    - `WARNING: Obstacle too close` when closest `< 2.0 m`
+    - `Object confirmed by synchronized sensors` when detections are valid and safe
+    - `Clear path` when no valid object is found
+
+- **Latency checks**
+  - `fusion_node` logs total callback-side delay from message timestamps.
+  - `latency_node` provides standalone monitoring of sensor timestamp-to-callback delay.
+  - Console output:
+    - `[Latency] Total: XX ms`
+
+- **Basic visualization**
+  - `fusion_node` publishes `visualization_msgs/msg/Marker` on `/visualization_marker`.
+  - Detections are shown as spheres:
+    - green for valid detections (`2.0 m` to `7.0 m`)
+    - red for too-close detections (`< 2.0 m`)
+
+### Run Step 5
+
+Terminal 1 — simulation:
+
+```bash
+source ~/ros2_ws/install/setup.bash
+ros2 launch multi_sensor_perception simulation.launch.py
+```
+
+Terminal 2 — fusion:
+
+```bash
+source ~/ros2_ws/install/setup.bash
+ros2 run multi_sensor_perception fusion_node --ros-args -p use_sim_time:=true
+```
+
+Terminal 3 — optional latency monitor:
+
+```bash
+source ~/ros2_ws/install/setup.bash
+ros2 run multi_sensor_perception latency_node --ros-args -p use_sim_time:=true
+```
+
+Optional RViz marker visualization:
+
+```bash
+rviz2
+```
+
+In RViz, add a **Marker** display and set topic to `/visualization_marker`.
