@@ -1,58 +1,82 @@
-"""Step 5: standalone latency monitor for /scan, /camera/image_raw, /imu."""
+"""Step 7: synchronized latency measurement for camera, LiDAR, and IMU."""
 
+from collections import deque
+
+import message_filters
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, Imu, LaserScan
+from std_msgs.msg import String
 
 
 class LatencyNode(Node):
-    """Computes sensor timestamp-to-callback delay for each stream."""
+    """Measures per-sensor and total pipeline latency from synchronized messages."""
 
     def __init__(self) -> None:
         super().__init__('latency_node')
         self.get_logger().info(
-            'Latency node started; monitoring /scan, /camera/image_raw, /imu.'
+            'Latency node started; synchronizing /scan, /camera/image_raw, /imu.'
         )
-        self._last_log_ns: int | None = None
-        self._log_period_ns = 1_000_000_000  # 1 second throttle for readability
 
-        self._scan_sub = self.create_subscription(
-            LaserScan, '/scan', self._scan_callback, 10
+        self._history = deque(maxlen=100)
+        self._latency_pub = self.create_publisher(String, '/latency', 10)
+
+        self._scan_sub = message_filters.Subscriber(self, LaserScan, '/scan')
+        self._camera_sub = message_filters.Subscriber(self, Image, '/camera/image_raw')
+        self._imu_sub = message_filters.Subscriber(self, Imu, '/imu')
+        self._sync = message_filters.ApproximateTimeSynchronizer(
+            [self._camera_sub, self._scan_sub, self._imu_sub],
+            queue_size=30,
+            slop=0.15,
         )
-        self._camera_sub = self.create_subscription(
-            Image, '/camera/image_raw', self._camera_callback, 10
-        )
-        self._imu_sub = self.create_subscription(
-            Imu, '/imu', self._imu_callback, 10
-        )
+        self._sync.registerCallback(self._sync_callback)
 
     @staticmethod
     def _stamp_to_ns(stamp: object) -> int:
         return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
 
-    def _should_log(self) -> bool:
-        now_ns = self.get_clock().now().nanoseconds
-        if self._last_log_ns is None or (now_ns - self._last_log_ns) >= self._log_period_ns:
-            self._last_log_ns = now_ns
-            return True
-        return False
+    def _sync_callback(self, cam_msg: Image, scan_msg: LaserScan, imu_msg: Imu) -> None:
+        callback_start_ns = self.get_clock().now().nanoseconds
 
-    def _log_latency(self, name: str, msg: object) -> None:
-        if not self._should_log():
+        cam_ns = self._stamp_to_ns(cam_msg.header.stamp)
+        scan_ns = self._stamp_to_ns(scan_msg.header.stamp)
+        imu_ns = self._stamp_to_ns(imu_msg.header.stamp)
+        if cam_ns <= 0 or scan_ns <= 0 or imu_ns <= 0:
+            self.get_logger().warn('Skipping latency frame: invalid sensor timestamp.')
             return
-        now_ns = self.get_clock().now().nanoseconds
-        sensor_ns = self._stamp_to_ns(msg.header.stamp)
-        total_ms = max(0.0, (now_ns - sensor_ns) / 1_000_000.0)
-        self.get_logger().info(f'[Latency] {name}: {total_ms:.0f} ms | Total: {total_ms:.0f} ms')
 
-    def _scan_callback(self, msg: LaserScan) -> None:
-        self._log_latency('scan', msg)
+        camera_latency_ms = max(0.0, (callback_start_ns - cam_ns) / 1_000_000.0)
+        lidar_latency_ms = max(0.0, (callback_start_ns - scan_ns) / 1_000_000.0)
+        imu_latency_ms = max(0.0, (callback_start_ns - imu_ns) / 1_000_000.0)
 
-    def _camera_callback(self, msg: Image) -> None:
-        self._log_latency('camera', msg)
+        # Proxy for "callback -> fusion output": time spent in this callback until publish.
+        processing_ms = 0.0
+        total_latency_ms = max(camera_latency_ms, lidar_latency_ms, imu_latency_ms)
 
-    def _imu_callback(self, msg: Imu) -> None:
-        self._log_latency('imu', msg)
+        latency_msg = String()
+        latency_msg.data = (
+            f'camera_ms={camera_latency_ms:.1f}; '
+            f'lidar_ms={lidar_latency_ms:.1f}; '
+            f'imu_ms={imu_latency_ms:.1f}; '
+            f'total_ms={total_latency_ms:.1f}'
+        )
+        self._latency_pub.publish(latency_msg)
+
+        callback_end_ns = self.get_clock().now().nanoseconds
+        processing_ms = max(0.0, (callback_end_ns - callback_start_ns) / 1_000_000.0)
+        total_pipeline_ms = total_latency_ms + processing_ms
+
+        self._history.append(total_pipeline_ms)
+        avg_total_ms = sum(self._history) / len(self._history)
+
+        self.get_logger().info(
+            '[Latency]\n'
+            f'Camera: {camera_latency_ms:.0f} ms | '
+            f'LiDAR: {lidar_latency_ms:.0f} ms | '
+            f'IMU: {imu_latency_ms:.0f} ms | '
+            f'Total: {total_pipeline_ms:.0f} ms | '
+            f'Avg({len(self._history)}): {avg_total_ms:.0f} ms'
+        )
 
 
 def main(args: list[str] | None = None) -> None:
