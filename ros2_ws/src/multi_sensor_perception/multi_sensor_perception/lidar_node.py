@@ -1,5 +1,7 @@
 """Step 3.2: minimal subscriber for /scan (sim or hardware)."""
 
+import math
+
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
@@ -32,12 +34,26 @@ class LidarNode(Node):
                 return
         self._last_log_ns = now_ns
 
+        filtered_ranges = [
+            distance
+            for distance in msg.ranges
+            if math.isfinite(distance) and 0.0 <= distance <= 7.0
+        ]
         n_ranges = len(msg.ranges)
         self.get_logger().info(
             f'Received scan (count={self._scan_count}): '
             f'angle_min={msg.angle_min:.4f} rad angle_max={msg.angle_max:.4f} rad '
             f'range_count={n_ranges}'
         )
+
+        if filtered_ranges:
+            filtered_text = ', '.join(f'{distance:.2f} m' for distance in filtered_ranges)
+            self.get_logger().info(
+                f'Filtered distances within 0.0-7.0 m ({len(filtered_ranges)}): '
+                f'[{filtered_text}]'
+            )
+        else:
+            self.get_logger().info('No obstacle detected within 7 meters')
 
 
 def main(args: list[str] | None = None) -> None:
