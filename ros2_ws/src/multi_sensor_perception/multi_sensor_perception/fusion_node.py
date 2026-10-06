@@ -1,6 +1,5 @@
 """Step 6: complete synchronized multi-sensor fusion node."""
 
-import math
 from typing import Any
 
 import message_filters
@@ -8,6 +7,8 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, Imu, LaserScan
 from std_msgs.msg import String
+
+from .perception_math import parse_perception, quaternion_yaw, sync_spread_ms, valid_ranges
 
 
 class FusionNode(Node):
@@ -41,45 +42,13 @@ class FusionNode(Node):
     def _stamp_to_ns(stamp: object) -> int:
         return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
 
-    @staticmethod
-    def _quat_to_yaw(x: float, y: float, z: float, w: float) -> float:
-        siny_cosp = 2.0 * (w * z + x * y)
-        cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
-        return math.atan2(siny_cosp, cosy_cosp)
-
     def _extract_valid_ranges(self, scan_msg: LaserScan) -> list[float]:
-        return [
-            d
-            for d in scan_msg.ranges
-            if math.isfinite(d) and 0.0 <= d <= self._max_detection_m
-        ]
+        return valid_ranges(scan_msg.ranges, self._max_detection_m)
 
     def _camera_ai_callback(self, msg: String) -> None:
-        parsed = self._parse_perception(msg.data)
+        parsed = parse_perception(msg.data)
         if parsed is not None:
             self._latest_camera_ai = parsed
-
-    @staticmethod
-    def _parse_perception(raw: str) -> dict[str, Any] | None:
-        try:
-            pieces = [part.strip() for part in raw.split(';') if part.strip()]
-            data: dict[str, Any] = {}
-            for piece in pieces:
-                if '=' not in piece:
-                    continue
-                key, value = piece.split('=', 1)
-                data[key.strip()] = value.strip()
-            if 'stamp_ns' not in data:
-                return None
-            return {
-                'stamp_ns': int(data.get('stamp_ns', '0')),
-                'detected': data.get('detected', 'false').lower() == 'true',
-                'label': data.get('label', 'none'),
-                'confidence': float(data.get('confidence', '0.0')),
-                'mode': data.get('mode', 'simple'),
-            }
-        except Exception:
-            return None
 
     def _build_output(
         self,
@@ -120,10 +89,7 @@ class FusionNode(Node):
             self.get_logger().warn('Skipping frame: invalid sensor timestamps.')
             return
 
-        lidar_camera_ms = abs(scan_ns - cam_ns) / 1_000_000.0
-        lidar_imu_ms = abs(scan_ns - imu_ns) / 1_000_000.0
-        camera_imu_ms = abs(cam_ns - imu_ns) / 1_000_000.0
-        sync_delay_ms = max(lidar_camera_ms, lidar_imu_ms, camera_imu_ms)
+        sync_delay_ms = sync_spread_ms(scan_ns, cam_ns, imu_ns)
 
         valid_ranges = self._extract_valid_ranges(scan_msg)
         object_count = len(valid_ranges)
@@ -148,7 +114,7 @@ class FusionNode(Node):
             camera_detected = bool(cam_msg.data)
 
         q = imu_msg.orientation
-        yaw_rad = self._quat_to_yaw(q.x, q.y, q.z, q.w)
+        yaw_rad = quaternion_yaw(q.x, q.y, q.z, q.w)
         output_stamp_ns = max(scan_ns, cam_ns, imu_ns)
 
         output_msg = self._build_output(
