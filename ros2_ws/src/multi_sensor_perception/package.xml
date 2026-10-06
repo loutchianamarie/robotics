@@ -3,9 +3,9 @@
 <package format="3">
   <name>multi_sensor_perception</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="loutchiana-marie@todo.todo">loutchiana-marie</maintainer>
-  <license>TODO: License declaration</license>
+  <description>Simulation-based camera, LiDAR, and IMU perception prototype</description>
+  <maintainer email="loutchiana9marie9@gmail.com">Loutchiana Marie</maintainer>
+  <license>Not specified</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>

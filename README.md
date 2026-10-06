@@ -1,46 +1,43 @@
 # Multi-Sensor Perception for Autonomous Robots
 
-A Python perception pipeline that brings camera, LiDAR, and IMU measurements together in ROS 2 and Gazebo. The project explores sensor synchronization, optional visual object detection, and timing diagnostics in a simulated robot environment.
+A **simulation-based academic prototype** that combines camera, LiDAR, and IMU messages in ROS 2 Jazzy and Gazebo Sim. The code demonstrates sensor-topic integration, approximate time synchronization, a simple fused summary, optional YOLO camera detection, and timing diagnostics. It is not a calibrated autonomous navigation stack.
 
-**Focus:** robotics perception · Python · ROS 2 Jazzy · Gazebo Sim · sensor integration · optional YOLO inference
+## What to inspect
 
-## Problem and approach
+| Component | Implementation |
+| --- | --- |
+| Gazebo world, robot model, bridge, launcher | [`ros2_ws/src/multi_sensor_perception`](ros2_ws/src/multi_sensor_perception/) |
+| Camera, LiDAR, IMU, fusion, and latency nodes | [`multi_sensor_perception/`](ros2_ws/src/multi_sensor_perception/multi_sensor_perception/) |
+| Pure fusion calculations and functional tests | [`perception_math.py`](ros2_ws/src/multi_sensor_perception/multi_sensor_perception/perception_math.py), [`test_perception_math.py`](ros2_ws/src/multi_sensor_perception/test/test_perception_math.py) |
 
-Robot sensors produce different kinds of measurements at different times. This project uses a modular ROS 2 architecture to acquire those measurements, align their timestamps, and publish a combined perception summary.
-
-The implementation pairs the nearest valid LiDAR range with IMU orientation and recent camera information. It provides a practical foundation for studying perception pipelines before adding navigation or more advanced fusion.
-
-## Implementation highlights
-
-| Component | What it does | Source |
-|---|---|---|
-| Simulation | Spawns a sensor-equipped robot and bridges Gazebo messages into ROS 2 | [Launch configuration](ros2_ws/src/multi_sensor_perception/launch/simulation.launch.py) |
-| Camera | Publishes camera information; optionally runs YOLO and selects the highest-confidence qualifying detection | [Camera node](ros2_ws/src/multi_sensor_perception/multi_sensor_perception/camera_node.py) |
-| LiDAR | Processes laser scans in a dedicated node | [LiDAR node](ros2_ws/src/multi_sensor_perception/multi_sensor_perception/lidar_node.py) |
-| IMU | Subscribes to orientation, angular velocity, and acceleration measurements | [IMU node](ros2_ws/src/multi_sensor_perception/multi_sensor_perception/imu_node.py) |
-| Fusion | Synchronizes raw sensor messages, filters LiDAR ranges, computes yaw, and adds recent camera information | [Fusion node](ros2_ws/src/multi_sensor_perception/multi_sensor_perception/fusion_node.py) |
-| Timing | Measures sensor timestamp-to-callback delays and tracks a rolling timing average | [Latency node](ros2_ws/src/multi_sensor_perception/multi_sensor_perception/latency_node.py) |
+The authoritative package is **only** under `ros2_ws/src/`. An earlier package copy was removed after comparing both directories; it remains recoverable in Git history. The `PROJECT_STEPS.md` file records the original plan and is not a current progress report.
 
 ## Architecture
 
-Gazebo publishes camera, laser-scan, and IMU messages through `ros_gz_bridge`. Dedicated sensor nodes consume these topics. The fusion and latency nodes independently synchronize the raw sensor streams.
+```mermaid
+flowchart LR
+    G[Gazebo Sim camera / LiDAR / IMU] --> B[ros_gz_bridge]
+    B --> C["/camera/image_raw"]
+    B --> L["/scan"]
+    B --> I["/imu"]
+    C --> CN[Camera node: optional YOLO]
+    CN --> P["/camera/perception"]
+    C --> F[Fusion node]
+    L --> F
+    I --> F
+    P --> F
+    F --> O["/fusion/output"]
+    C --> T[Latency node]
+    L --> T
+    I --> T
+    T --> D["/latency"]
+```
 
-| Topic | Purpose |
-|---|---|
-| `/camera/image_raw` | Raw camera images |
-| `/scan` | LiDAR scans |
-| `/imu` | Inertial measurements |
-| `/camera/perception` | Camera label, confidence, bounding box, and processing mode |
-| `/fusion/output` | Combined distance, orientation, camera information, and timestamp diagnostics |
-| `/latency` | Per-sensor timestamp-to-callback timing |
+The fusion node synchronizes raw image, scan, and IMU messages with a 150 ms tolerance. It takes the closest finite LiDAR reading within 7 m, converts the IMU quaternion to yaw, and includes camera telemetry when it is within 300 ms of the image timestamp. The camera node can use YOLO when compatible weights and dependencies are installed. Otherwise `image_present` means only that a frame arrived.
 
-The fusion node uses `ApproximateTimeSynchronizer` with a 150 ms tolerance. It calculates the closest finite LiDAR reading within 7 m and converts IMU orientation from quaternion to yaw. Camera results are included when their timestamp is within 300 ms of the synchronized image.
+## Build and run
 
-## Run the simulation
-
-Prerequisites: a ROS 2 Jazzy environment, Gazebo integration through `ros_gz`, `colcon`, and the dependencies declared in [package.xml](ros2_ws/src/multi_sensor_perception/package.xml).
-
-The commands below use the implementation under **`ros2_ws/src/`**. A second, earlier package copy exists under the repository-level `src/`; build from `ros2_ws` to avoid discovering both packages.
+Use Ubuntu 24.04 with ROS 2 Jazzy, Gazebo integration (`ros_gz`), `colcon`, and the dependencies declared in [`package.xml`](ros2_ws/src/multi_sensor_perception/package.xml). These commands require a working ROS environment; the current Windows audit could not run the full Gazebo simulation.
 
 ```bash
 git clone https://github.com/loutchianamarie/robotics.git
@@ -51,7 +48,7 @@ source install/setup.bash
 ros2 launch multi_sensor_perception simulation.launch.py
 ```
 
-Start the following nodes in separate terminals. In each terminal, first enter `robotics/ros2_ws` and source both ROS 2 and `install/setup.bash`.
+In separate sourced terminals from `robotics/ros2_ws`, start:
 
 ```bash
 ros2 run multi_sensor_perception camera_node --ros-args -p use_sim_time:=true -p enable_ai:=false
@@ -59,21 +56,7 @@ ros2 run multi_sensor_perception fusion_node --ros-args -p use_sim_time:=true
 ros2 run multi_sensor_perception latency_node --ros-args -p use_sim_time:=true
 ```
 
-The simulation launcher starts Gazebo, the bridge, and robot spawning. It does not start the perception nodes. The separate LiDAR and IMU nodes can also be run for sensor-specific inspection.
-
-## Optional YOLO detection
-
-The camera node supports Ultralytics YOLO through `cv_bridge`, with `yolov8n.pt` as its default model and a confidence threshold of 0.5. Install compatible dependencies and make the weights available in the Python environment used by ROS 2, then enable AI:
-
-```bash
-ros2 run multi_sensor_perception camera_node --ros-args -p use_sim_time:=true -p enable_ai:=true
-```
-
-When the model or dependencies are unavailable, the node falls back to an `image_present` signal. That signal confirms image availability; it is not an object-detection result.
-
-## Inspect the output
-
-With Gazebo playing and the nodes running:
+The launcher starts Gazebo, the bridge, and robot spawning. It does **not** start the perception nodes. For sensor-specific inspection, also run `lidar_node` and `imu_node`. With the simulation playing:
 
 ```bash
 ros2 topic hz /scan
@@ -81,22 +64,14 @@ ros2 topic echo /fusion/output --once
 ros2 topic echo /latency --once
 ```
 
-The fusion output includes `object_detected`, `distance_m`, `orientation_yaw_rad`, `sync_delay_ms`, and camera label/confidence/mode fields.
+For optional YOLO inference, install compatible `cv_bridge` and `ultralytics` packages in the ROS Python environment, make `yolov8n.pt` available, and set `enable_ai:=true`. The code falls back to simple mode if model loading fails.
 
-## Scope and evaluation
+## Tests and scope
 
-This is a simulation-based perception prototype. It combines sensor information without calibrated camera-to-LiDAR object association or a probabilistic state estimator. The obstacle flag is driven by LiDAR; it does not prove that a camera label corresponds to the closest range.
+The CI workflow compiles Python sources and tests pure fusion helpers without ROS. Run the same checks locally with `PYTHONPATH=ros2_ws/src/multi_sensor_perception python -m pytest -q ros2_ws/src/multi_sensor_perception/test/test_perception_math.py` after installing `pytest`. ROS build, launch, simulated sensor flow, and YOLO inference still need verification in a ROS 2 Jazzy environment. No accuracy, end-to-end latency, or field performance numbers are claimed.
 
-The latency monitor measures delays at its own synchronized callback. Its total is a diagnostic proxy, not a measurement of the complete camera-inference-to-fusion path. Reproducible benchmark results and a recorded demonstration are still needed before making quantitative performance or accuracy claims.
+The LiDAR obstacle flag is not associated with a particular camera bounding box. There is no sensor calibration, probabilistic state estimator, map, or navigation controller. The latency node reports a callback timing proxy; it does not measure the full camera inference-to-fusion path. A recorded simulation demo is still needed.
 
-## Next steps
+## Attribution and license
 
-- Record a simulation walkthrough showing sensor inputs and combined output.
-- Compare AI-enabled and fallback runs using recorded timing data.
-- Consolidate the two package copies after checking which work must be preserved.
-- Add camera–LiDAR calibration and object association.
-- Extend evaluation to navigation and obstacle avoidance.
-
-## Skills demonstrated
-
-ROS 2 publish/subscribe architecture, Python node development, asynchronous sensor integration, timestamp synchronization, optional computer-vision inference, and performance instrumentation.
+Loutchiana Marie authored the ROS implementation commits in this repository; Charbel Mezeraani contributed documentation commits. See Git history for attribution. No open-source license has been granted for the combined repository, so obtain contributor agreement before reusing or relicensing the code.

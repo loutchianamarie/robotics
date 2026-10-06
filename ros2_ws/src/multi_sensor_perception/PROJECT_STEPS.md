@@ -1,6 +1,6 @@
 # Project roadmap
 
-High-level plan for **Multi-Sensor Perception Architecture for Autonomous Robots**. Steps can overlap in time; order reflects typical dependency flow.
+Historical high-level plan for **Multi-Sensor Perception Architecture for Autonomous Robots**. This file records the original steps; see the repository README for current implemented scope and limitations. Steps can overlap in time; order reflects typical dependency flow.
 
 ## Step 1 — Minimal node architecture
 

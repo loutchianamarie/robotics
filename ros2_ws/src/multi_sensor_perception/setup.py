@@ -24,10 +24,10 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='loutchiana-marie',
-    maintainer_email='loutchiana-marie@todo.todo',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    maintainer='Loutchiana Marie',
+    maintainer_email='loutchiana9marie9@gmail.com',
+    description='Simulation-based camera, LiDAR, and IMU perception prototype',
+    license='Not specified',
     extras_require={
         'test': [
             'pytest',
